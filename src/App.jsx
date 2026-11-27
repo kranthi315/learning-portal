@@ -2,46 +2,148 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowRight, Award, BarChart3, Bell, BookOpen, BriefcaseBusiness,
   CalendarDays, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3,
-  Cloud, Download, FileCheck2, FileText, Filter, GraduationCap, LayoutDashboard, LockKeyhole, LogOut,
-  Menu, MessageSquareText, MoreHorizontal, Play, Plus, Search, Settings, ShieldCheck, Sparkles,
-  Upload, Users, X, Zap,
+  Cloud, Download, Eye, EyeOff, FileCheck2, FileText, Filter, Globe2, GraduationCap, LayoutDashboard,
+  LifeBuoy, LockKeyhole, LogOut, Mail, Menu, MessageSquareText, MoreHorizontal, Play, Plus, Search,
+  Settings, ShieldCheck, SlidersHorizontal, Sparkles, Upload, UserCog, UserRound, Users, X, Zap,
 } from 'lucide-react';
 import { assignments as initialAssignments, courses, lessons, notifications, quizQuestions } from './data.js';
+import { authMode, initializeAuth, signInWithMicrosoft, signOutFromMicrosoft } from './services/auth.js';
 import { createCertificatePdf } from './services/certificatePdf.js';
+import { useDemoState } from './services/demoState.js';
 
-const navGroups = [
-  { label: 'LEARN', links: [['Dashboard', LayoutDashboard], ['Course catalog', BookOpen], ['My learning', GraduationCap]] },
-  { label: 'MY ACTIVITY', links: [['Assignments', FileCheck2], ['Assessments', CircleHelp], ['Certifications', Award], ['Notifications', Bell]] },
-  { label: 'MANAGE', links: [['Instructor dashboard', BriefcaseBusiness], ['Admin dashboard', BarChart3], ['User management', Users], ['Reports & analytics', Activity]] },
-];
-const pageMap = { Dashboard: 'dashboard', 'Course catalog': 'catalog', 'My learning': 'learning', Assignments: 'assignments', Assessments: 'assessments', Certifications: 'certifications', Notifications: 'notifications', 'Instructor dashboard': 'instructor', 'Admin dashboard': 'admin', 'User management': 'users', 'Reports & analytics': 'reports' };
+const learningLinks = [['Dashboard', LayoutDashboard], ['My learning', GraduationCap], ['Course catalog', BookOpen]];
+const activityLinks = [['Assignments', FileCheck2], ['Assessments', CircleHelp], ['Certifications', Award], ['Notifications', Bell]];
+const roleLinks = {
+  Instructor: [['Instructor dashboard', BriefcaseBusiness]],
+  Administrator: [['Admin dashboard', BarChart3], ['User management', Users], ['Reports & analytics', Activity]],
+};
+const pageMap = {
+  Dashboard: 'dashboard', 'Course catalog': 'catalog', 'My learning': 'learning',
+  Assignments: 'assignments', Assessments: 'assessments', Certifications: 'certifications',
+  Notifications: 'notifications', 'Instructor dashboard': 'instructor', 'Admin dashboard': 'admin',
+  'User management': 'users', 'Reports & analytics': 'reports', 'My Profile': 'profile',
+  'Account Settings': 'account-settings', 'Notification Preferences': 'notification-settings',
+  'Help and Support': 'help', 'About Learning Hub': 'about',
+};
+const profileDefaults = {
+  displayName: 'Kranthi Thimmayya',
+  phone: '+1 (425) 555-0142',
+  department: 'Cloud Learning',
+  designation: 'Learning Program Participant',
+  employeeId: 'DEMO-10482',
+  manager: 'Sarah Chen',
+};
+const preferenceDefaults = {
+  emailDeadlines: true,
+  emailGrades: true,
+  emailCourseUpdates: false,
+  productUpdates: false,
+  language: 'English (United States)',
+  compactMode: false,
+};
 const fmt = (n) => String(n).padStart(2, '0');
 
 function App() {
-  const [signedIn, setSignedIn] = useState(false);
+  const [authReady, setAuthReady] = useState(authMode === 'demo');
+  const [authError, setAuthError] = useState('');
+  const [account, setAccount] = useState(() => {
+    if (authMode !== 'demo') return null;
+    const username = window.sessionStorage.getItem('learning-hub:demo-email')
+      || (window.localStorage.getItem('learning-hub:remember-demo') === 'active' ? window.localStorage.getItem('learning-hub:demo-email') : null);
+    return username ? { username, name: profileDefaults.displayName } : null;
+  });
+  const [signedIn, setSignedIn] = useState(() => authMode === 'demo' && (
+    window.sessionStorage.getItem('learning-hub:demo-session') === 'active'
+    || window.localStorage.getItem('learning-hub:remember-demo') === 'active'
+  ));
   const [page, setPage] = useState('dashboard');
-  const [role, setRole] = useState('Student');
+  const [role, setRole] = useDemoState('role-preview', 'Student');
+  const [profiles, setProfiles] = useDemoState('profiles', {});
+  const [preferenceStore, setPreferenceStore] = useDemoState('preferences', {});
   const [courseId, setCourseId] = useState('az900');
-  const [enrolledCourseIds, setEnrolledCourseIds] = useState(() => courses.filter((course) => course.enrolled).map((course) => course.id));
+  const [enrolledCourseIds, setEnrolledCourseIds] = useDemoState('enrolled-courses', courses.filter((course) => course.enrolled).map((course) => course.id));
   const [lessonIndex, setLessonIndex] = useState(0);
-  const [doneLessonsByCourse, setDoneLessonsByCourse] = useState({ az900: [0, 1, 2, 3] });
+  const [doneLessonsByCourse, setDoneLessonsByCourse] = useDemoState('completed-lessons', { az900: [0, 1, 2, 3] });
   const [courseSearch, setCourseSearch] = useState('');
   const [category, setCategory] = useState('All categories');
   const [level, setLevel] = useState('All levels');
   const [statusFilter, setStatusFilter] = useState('All courses');
-  const [assignmentsList, setAssignmentsList] = useState(initialAssignments);
+  const [assignmentsList, setAssignmentsList] = useDemoState('assignments', initialAssignments);
   const [selectedAssignment, setSelectedAssignment] = useState(1);
   const [selectedFile, setSelectedFile] = useState(null);
   const [comment, setComment] = useState('');
-  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizAnswers, setQuizAnswers] = useDemoState('assessment-draft', {});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
-  const [notificationRead, setNotificationRead] = useState(false);
+  const [assessmentHistory, setAssessmentHistory] = useDemoState('assessment-history', []);
+  const [readNotifications, setReadNotifications] = useDemoState('read-notifications', []);
+  const [notificationFilter, setNotificationFilter] = useState('All');
   const [globalSearch, setGlobalSearch] = useState('');
   const [toast, setToast] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [loginEmail, setLoginEmail] = useState('kranthi@example.com');
   const [loginPassword, setLoginPassword] = useState('');
   const [filterDate, setFilterDate] = useState('Last 30 days');
+
+  const identityKey = account?.username?.toLowerCase() || 'demo';
+  const initialProfile = authMode === 'demo'
+    ? profileDefaults
+    : { ...profileDefaults, displayName: account?.name || '', phone: '', department: '', designation: '', employeeId: '', manager: '' };
+  const profile = { ...initialProfile, ...(profiles[identityKey] || {}) };
+  const preferences = { ...preferenceDefaults, ...(preferenceStore[identityKey] || {}) };
+  const updateProfile = (key, value) => setProfiles((current) => ({
+    ...current,
+    [identityKey]: { ...initialProfile, ...(current[identityKey] || {}), [key]: value },
+  }));
+  const updatePreference = (key, value) => setPreferenceStore((current) => ({
+    ...current,
+    [identityKey]: { ...preferenceDefaults, ...(current[identityKey] || {}), [key]: value },
+  }));
+  const navGroups = [
+    { label: 'LEARN', links: learningLinks },
+    { label: 'MY ACTIVITY', links: activityLinks },
+    ...(roleLinks[role] ? [{ label: 'MANAGE', links: roleLinks[role] }] : []),
+  ];
+
+  useEffect(() => {
+    let active = true;
+    initializeAuth().then((identity) => {
+      if (!active) return;
+      if (identity) {
+        setAccount(identity);
+        const claims = identity.idTokenClaims || {};
+        const identityRole = Array.isArray(claims.roles)
+          ? claims.roles.find((claim) => ['Student', 'Instructor', 'Administrator'].includes(claim))
+          : null;
+        setRole(identityRole || 'Student');
+        setSignedIn(true);
+      }
+      setAuthReady(true);
+    }).catch((error) => {
+      console.error('Unable to initialize Microsoft Entra sign-in.', error);
+      if (active) {
+        setAuthError('Organizational sign-in could not be initialized. Check the Entra configuration and try again.');
+        setAuthReady(true);
+      }
+    });
+    return () => { active = false; };
+  }, [setRole]);
+  useEffect(() => {
+    if (!signedIn) return undefined;
+    const handleShortcut = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        document.querySelector('.global-search input')?.focus();
+      }
+      if (event.key === 'Escape') {
+        setProfileMenuOpen(false);
+        setSidebarOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [signedIn]);
 
   const allCourses = useMemo(() => courses.map((course) => ({ ...course, enrolled: enrolledCourseIds.includes(course.id) })), [enrolledCourseIds]);
   const activeCourse = allCourses.find((course) => course.id === courseId) || allCourses[0];
@@ -56,8 +158,71 @@ function App() {
   }), [allCourses, courseSearch, category, level, statusFilter]);
   const completedLessons = doneLessons.filter((index) => index < lessons.length).length;
   const progress = Math.round((completedLessons / lessons.length) * 100);
+  const unreadCount = notifications.filter((item) => item.unread && !readNotifications.includes(item.title)).length;
   const alert = (text) => { setToast(text); window.setTimeout(() => setToast(''), 3000); };
-  const navigate = (nextPage) => { setPage(nextPage); setSidebarOpen(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  const allowedPage = (nextPage) => {
+    if (['admin', 'users', 'reports'].includes(nextPage)) return role === 'Administrator';
+    if (nextPage === 'instructor') return role === 'Instructor';
+    return true;
+  };
+  const navigate = (nextPage) => {
+    setPage(allowedPage(nextPage) ? nextPage : 'access-denied');
+    setSidebarOpen(false);
+    setProfileMenuOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const changeRole = (nextRole) => {
+    if (authMode !== 'demo') return;
+    setRole(nextRole);
+    if ((['admin', 'users', 'reports'].includes(page) && nextRole !== 'Administrator')
+      || (page === 'instructor' && nextRole !== 'Instructor')) setPage('dashboard');
+    setProfileMenuOpen(false);
+  };
+  const completeDemoSignIn = (remember) => {
+    const username = loginEmail.trim().toLowerCase();
+    window.sessionStorage.setItem('learning-hub:demo-session', 'active');
+    window.sessionStorage.setItem('learning-hub:demo-email', username);
+    if (remember) {
+      window.localStorage.setItem('learning-hub:remember-demo', 'active');
+      window.localStorage.setItem('learning-hub:demo-email', username);
+    } else {
+      window.localStorage.removeItem('learning-hub:remember-demo');
+      window.localStorage.removeItem('learning-hub:demo-email');
+    }
+    setAccount({ username, name: profileDefaults.displayName });
+    setRole('Student');
+    setSignedIn(true);
+    navigate('dashboard');
+  };
+  const handleEntraSignIn = async () => {
+    setAuthError('');
+    try {
+      await signInWithMicrosoft();
+    } catch (error) {
+      console.error('Microsoft Entra sign-in failed.', error);
+      setAuthError('Microsoft sign-in could not be started. Please try again or contact your administrator.');
+    }
+  };
+  const handleSignOut = async () => {
+    setLogoutConfirm(false);
+    if (authMode === 'entra') {
+      try {
+        await signOutFromMicrosoft();
+      } catch (error) {
+        console.error('Microsoft Entra sign-out failed.', error);
+        setAuthError('Sign-out could not be completed. Please try again.');
+        alert('Sign-out could not be completed.');
+      }
+      return;
+    }
+    window.sessionStorage.removeItem('learning-hub:demo-session');
+    window.sessionStorage.removeItem('learning-hub:demo-email');
+    window.localStorage.removeItem('learning-hub:remember-demo');
+    window.localStorage.removeItem('learning-hub:demo-email');
+    setAccount(null);
+    setSignedIn(false);
+    setPage('dashboard');
+  };
   const openCourse = (id) => { setCourseId(id); setLessonIndex(0); navigate('course'); };
   const enrollCourse = (id) => {
     setEnrolledCourseIds((current) => current.includes(id) ? current : [...current, id]);
@@ -88,7 +253,17 @@ function App() {
     navigate('assignments');
     setSelectedFile(null);
   };
-  const submitQuiz = () => { setQuizSubmitted(true); navigate('results'); };
+  const submitQuiz = () => {
+    if (quizSubmitted) return;
+    const result = {
+      id: `${Date.now()}`,
+      score: Math.round(score / quizQuestions.length * 100),
+      completedAt: new Date().toISOString(),
+    };
+    setAssessmentHistory((current) => [result, ...current]);
+    setQuizSubmitted(true);
+    navigate('results');
+  };
   const saveQuiz = () => { alert('Your progress has been saved. You can continue later.'); navigate('assessments'); };
   const score = quizQuestions.reduce((total, question, index) => {
     const selected = quizAnswers[index];
@@ -96,22 +271,34 @@ function App() {
     return total + (selected === question.answer ? 1 : 0);
   }, 0);
 
-  if (!signedIn) return <Login email={loginEmail} setEmail={setLoginEmail} password={loginPassword} setPassword={setLoginPassword} onLogin={() => { setSignedIn(true); navigate('dashboard'); }} alert={alert} toast={toast} />;
+  if (!authReady) return <div className="auth-loading" role="status">Connecting to your sign-in provider…</div>;
+  if (!signedIn) return <Login
+    email={loginEmail}
+    setEmail={setLoginEmail}
+    password={loginPassword}
+    setPassword={setLoginPassword}
+    mode={authMode}
+    error={authError}
+    onLogin={completeDemoSignIn}
+    onEntraSignIn={handleEntraSignIn}
+    onReset={() => alert(`If an account exists for ${loginEmail || 'that address'}, password reset instructions will be sent.`)}
+    toast={toast}
+  />;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${preferences.compactMode ? 'compact-mode' : ''}`}>
       <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <div className="brand" aria-label="Microsoft Learning Hub"><div className="brand-mark"><BookOpen size={19} /></div><div><strong>Microsoft Learning Hub</strong><small>DEMO ENVIRONMENT</small></div><button className="icon-btn mobile-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu"><X size={19} /></button></div>
         <div className="workspace-label">WORKSPACE</div>
         <nav className="side-nav">
           {navGroups.map((group) => <div className="nav-group" key={group.label}>
             <div className="nav-caption">{group.label}</div>
-            {group.links.map(([label, Icon]) => <button key={label} className={`nav-item ${page === pageMap[label] ? 'active' : ''}`} onClick={() => navigate(pageMap[label])}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Notifications' && !notificationRead && <i className="nav-dot" />}</button>)}
+            {group.links.map(([label, Icon]) => <button key={label} className={`nav-item ${page === pageMap[label] ? 'active' : ''}`} onClick={() => navigate(pageMap[label])}><Icon size={18} strokeWidth={1.8} /><span>{label}</span>{label === 'Notifications' && unreadCount > 0 && <i className="nav-dot" />}</button>)}
           </div>)}
         </nav>
         <div className="sidebar-bottom">
           <div className="help-card"><div className="help-icon"><Sparkles size={17} /></div><strong>Keep growing</strong><p>Your next skill is one lesson away.</p><button onClick={() => navigate('catalog')}>Explore courses <ArrowRight size={14} /></button></div>
-          <div className="profile-mini"><div className="avatar">KT</div><div className="profile-info"><strong>Kranthi Thimmayya</strong><small>{role} · Demo account</small></div><button className="icon-btn" onClick={() => setRole(role === 'Student' ? 'Instructor' : role === 'Instructor' ? 'Administrator' : 'Student')} title="Switch role preview"><MoreHorizontal size={19} /></button></div>
+          <button className="profile-mini profile-mini-button" onClick={() => setProfileMenuOpen((open) => !open)} aria-expanded={profileMenuOpen} aria-label="Open profile and account menu"><div className="avatar">{profile.displayName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</div><div className="profile-info"><strong>{profile.displayName}</strong><small>{role}{authMode === 'demo' ? ' · Demo account' : ' · Organizational account'}</small></div><MoreHorizontal size={19} /></button>
         </div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" />}
@@ -119,43 +306,130 @@ function App() {
         <header className="topbar">
           <button className="icon-btn menu-toggle" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Menu size={20} /></button>
           <div className="breadcrumb"><span>Learning Hub</span><ChevronRight size={14} /><strong>{pageTitle(page)}</strong></div>
-          <div className="topbar-actions"><label className="global-search"><Search size={16} /><input placeholder="Search anything..." value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); if (event.target.value) { setCourseSearch(event.target.value); navigate('catalog'); } }} /><kbd>⌘ K</kbd></label><button className="icon-btn notification-btn" aria-label="Notifications" onClick={() => { setNotificationRead(false); navigate('notifications'); }}><Bell size={19} />{!notificationRead && <i />}</button><div className="top-avatar" title="Kranthi Thimmayya">KT</div></div>
+          <div className="topbar-actions"><label className="global-search"><Search size={16} /><input aria-label="Search courses" placeholder="Search anything..." value={globalSearch} onChange={(event) => { setGlobalSearch(event.target.value); setCourseSearch(event.target.value); if (event.target.value) navigate('catalog'); }} /><kbd>Ctrl K</kbd></label><button className="icon-btn notification-btn" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`} onClick={() => navigate('notifications')}><Bell size={19} />{unreadCount > 0 && <i />}</button><button className="top-avatar top-avatar-button" onClick={() => setProfileMenuOpen((open) => !open)} aria-label="Open account menu">{profile.displayName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</button></div>
         </header>
         <div className="page-content">{renderPage()}</div>
         <footer className="app-footer"><span>Microsoft Learning Hub <b>·</b> Demo prototype</span><span>Not an official Microsoft product</span></footer>
       </main>
+      {profileMenuOpen && <>
+        <button className="menu-dismiss" onClick={() => setProfileMenuOpen(false)} aria-label="Close account menu" />
+        <section className="account-menu" aria-label="Profile and account menu">
+          <div className="account-menu-header"><div className="avatar">{profile.displayName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</div><div><b>{profile.displayName}</b><span>{account?.username || 'Demo learner account'}</span><small>{role} · {authMode === 'demo' ? 'Demo' : 'Entra ID'}</small></div></div>
+          <div className="account-menu-items">
+            {['My Profile', 'Account Settings', 'Notification Preferences', 'Help and Support', 'About Learning Hub'].map((label, index) => {
+              const Icon = [UserRound, Settings, Bell, LifeBuoy, CircleHelp][index];
+              return <button key={label} onClick={() => navigate(pageMap[label])}><Icon size={16} />{label}</button>;
+            })}
+          </div>
+          {authMode === 'demo' && <div className="role-switcher"><label htmlFor="role-preview">Demo role preview</label><select id="role-preview" value={role} onChange={(event) => changeRole(event.target.value)}><option>Student</option><option>Instructor</option><option>Administrator</option></select><small>Role previews are local UI demos, not authorization.</small></div>}
+          <button className="account-signout" onClick={() => { setProfileMenuOpen(false); setLogoutConfirm(true); }}><LogOut size={16} /> Sign out</button>
+        </section>
+      </>}
+      {logoutConfirm && <div className="modal-backdrop" role="presentation"><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="logout-title"><div className="modal-icon"><LogOut size={19} /></div><h2 id="logout-title">Sign out of Learning Hub?</h2><p>{authMode === 'demo' ? 'Your demo progress is saved in this browser. You can sign back in to continue.' : 'You will be redirected to your organizational sign-in provider.'}</p><div className="modal-actions"><Button variant="secondary" onClick={() => setLogoutConfirm(false)}>Cancel</Button><Button onClick={handleSignOut}>Sign out</Button></div></section></div>}
       {toast && <div className="toast"><CheckCircle2 size={18} />{toast}<button onClick={() => setToast('')}><X size={15} /></button></div>}
     </div>
   );
 
   function renderPage() {
     switch (page) {
-      case 'dashboard': return <Dashboard onNavigate={navigate} onCourse={openCourse} role={role} />;
+      case 'dashboard': return <Dashboard onNavigate={navigate} onCourse={openCourse} role={role} displayName={profile.displayName} />;
       case 'catalog': return <Catalog courses={filteredCourses} search={courseSearch} setSearch={setCourseSearch} category={category} setCategory={setCategory} level={level} setLevel={setLevel} status={statusFilter} setStatus={setStatusFilter} onCourse={openCourse} alert={alert} onEnroll={enrollCourse} />;
       case 'course': return <CoursePage course={activeCourse} progress={progress} lessonsDone={doneLessons} lessonIndex={lessonIndex} setLessonIndex={setLessonIndex} onMark={markLesson} onEnroll={() => enrollCourse(activeCourse.id)} onBack={() => navigate('catalog')} />;
       case 'learning': return <MyLearning courses={allCourses} onCourse={openCourse} />;
       case 'assignments': return <Assignments assignments={assignmentsList} onOpen={(id) => { setSelectedAssignment(id); navigate('submission'); }} />;
       case 'submission': return <Submission assignment={assignment} selectedFile={selectedFile} setFile={setSelectedFile} comment={comment} setComment={setComment} onBack={() => navigate('assignments')} onSubmit={submitAssignment} alert={alert} />;
-      case 'assessments': return <Assessments onStart={() => { if (quizSubmitted) setQuizAnswers({}); setQuizSubmitted(false); navigate('quiz'); }} />;
+      case 'assessments': return <Assessments history={assessmentHistory} onStart={() => { if (quizSubmitted) setQuizAnswers({}); setQuizSubmitted(false); navigate('quiz'); }} />;
       case 'quiz': return <Quiz answers={quizAnswers} setAnswers={setQuizAnswers} onSubmit={submitQuiz} onSave={saveQuiz} />;
-      case 'results': return <Results score={score} answers={quizAnswers} onRetry={() => navigate('assessments')} />;
+      case 'results': return <Results score={score} answers={quizAnswers} completedAt={assessmentHistory[0]?.completedAt} onRetry={() => navigate('assessments')} />;
       case 'certifications': return <Certifications courses={allCourses} onDownload={downloadCertificate} onCourse={openCourse} />;
-      case 'notifications': return <Notifications read={notificationRead} setRead={setNotificationRead} />;
+      case 'notifications': return <Notifications
+        readIds={readNotifications}
+        filter={notificationFilter}
+        setFilter={setNotificationFilter}
+        onReadAll={() => setReadNotifications(notifications.map((item) => item.title))}
+        onRead={(title) => setReadNotifications((current) => current.includes(title) ? current : [...current, title])}
+        onSettings={() => navigate('notification-settings')}
+      />;
+      case 'profile': return <ProfilePage profile={profile} account={account} mode={authMode} onChange={updateProfile} onSave={() => alert('Profile changes saved in this browser.')} />;
+      case 'account-settings': return <AccountSettings account={account} role={role} mode={authMode} onSignOut={() => setLogoutConfirm(true)} />;
+      case 'notification-settings': return <NotificationSettings preferences={preferences} onChange={updatePreference} />;
+      case 'help': return <HelpPage />;
+      case 'about': return <AboutPage />;
+      case 'access-denied': return <AccessDenied onBack={() => navigate('dashboard')} />;
       case 'instructor': return <Instructor alert={alert} />;
       case 'admin': return <><Admin onNavigate={navigate} /><BackgroundJobs alert={alert} /></>;
       case 'users': return <UsersPage alert={alert} />;
       case 'reports': return <Reports date={filterDate} setDate={setFilterDate} />;
-      default: return <Dashboard onNavigate={navigate} onCourse={openCourse} role={role} />;
+      default: return <Dashboard onNavigate={navigate} onCourse={openCourse} role={role} displayName={profile.displayName} />;
     }
   }
 }
 
 function pageTitle(page) {
-  return ({ dashboard: 'Dashboard', catalog: 'Course catalog', course: 'Course details', learning: 'My learning', assignments: 'Assignment center', submission: 'Assignment submission', assessments: 'Assessments', quiz: 'Assessment in progress', results: 'Assessment results', certifications: 'My certifications', notifications: 'Notifications', instructor: 'Instructor dashboard', admin: 'Admin dashboard', users: 'User management', reports: 'Reports & analytics' })[page] || 'Dashboard';
+  return ({
+    dashboard: 'Dashboard', catalog: 'Course catalog', course: 'Course details', learning: 'My learning',
+    assignments: 'Assignment center', submission: 'Assignment submission', assessments: 'Assessments',
+    quiz: 'Assessment in progress', results: 'Assessment results', certifications: 'My certifications',
+    notifications: 'Notifications', instructor: 'Instructor dashboard', admin: 'Admin dashboard',
+    users: 'User management', reports: 'Reports & analytics', profile: 'My Profile',
+    'account-settings': 'Account Settings', 'notification-settings': 'Notification Preferences',
+    help: 'Help and Support', about: 'About Learning Hub', 'access-denied': 'Access unavailable',
+  })[page] || 'Dashboard';
 }
 
-function Login({ email, setEmail, password, setPassword, onLogin, alert, toast }) {
+function DeprecatedLogin({ email, setEmail, password, setPassword, onLogin, alert, toast }) {
   return <div className="login-screen"><div className="login-left"><div className="login-brand"><span className="brand-mark"><BookOpen size={19} /></span><span>Learning Hub</span><small>DEMO</small></div><div className="login-hero"><div className="eyebrow"><span className="eyebrow-line" /> YOUR NEXT CHAPTER STARTS HERE</div><h1>Make learning<br />your <span>superpower.</span></h1><p>Build skills for tomorrow with learning experiences designed around you.</p><div className="login-illustration"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="illustration-card"><div className="ill-icon"><Cloud size={28} /></div><div><b>Azure Fundamentals</b><small>Learning path · 68% complete</small></div><div className="ill-progress"><span /></div></div><div className="float-chip chip-a"><Award size={17} /> New certification</div><div className="float-chip chip-b"><Zap size={16} /> 3 day streak</div></div></div><div className="login-left-footer">A prototype experience · Not an official Microsoft product</div></div><div className="login-right"><form className="login-form" onSubmit={(event) => { event.preventDefault(); onLogin(); }}><div className="form-kicker">WELCOME BACK</div><h2>Sign in to your account</h2><p className="login-subtitle">Pick up where you left off on your learning journey.</p><label className="field-label">Email address</label><div className="input-wrap"><input required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" /></div><label className="field-label password-label">Password <button type="button" className="text-button" onClick={() => alert('Password reset is simulated in this demo.')}>Forgot password?</button></label><div className="input-wrap"><input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" /></div><label className="remember"><input type="checkbox" defaultChecked /> <span>Remember me</span></label><button className="button button-primary login-submit" type="submit">Sign in <ArrowRight size={17} /></button><div className="divider"><span>or continue with</span></div><button type="button" className="button org-button" onClick={() => { onLogin(); }}><span className="entra-mark"><span /><span /><span /><span /></span> Sign in with organizational account</button><div className="demo-note"><ShieldCheck size={16} /><span>Demo sign-in — any email and password will work.</span></div><div className="login-terms">By signing in, you agree to our <a href="#terms" onClick={(event) => event.preventDefault()}>Terms</a> and <a href="#privacy" onClick={(event) => event.preventDefault()}>Privacy statement</a>.</div></form><div className="login-copyright">© 2026 Learning Hub Demo <span>·</span> Privacy <span>·</span> Help</div></div>{toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}</div>;
+}
+
+function Login({ email, setEmail, password, setPassword, mode, error, onLogin, onEntraSignIn, onReset, toast }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const [resetMode, setResetMode] = useState(false);
+  const [remember, setRemember] = useState(true);
+  const isEntra = mode === 'entra';
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    if (isEntra) onEntraSignIn();
+    else if (resetMode) {
+      onReset();
+      setResetMode(false);
+    }     else onLogin(remember);
+  };
+  return (
+    <div className="login-screen">
+      <div className="login-left">
+        <div className="login-brand"><span className="brand-mark"><BookOpen size={19} /></span><span>Learning Hub</span><small>{isEntra ? 'ORGANIZATIONAL SIGN-IN' : 'DEMO'}</small></div>
+        <div className="login-hero">
+          <div className="eyebrow"><span className="eyebrow-line" /> YOUR NEXT CHAPTER STARTS HERE</div>
+          <h1>Make learning<br />your <span>superpower.</span></h1>
+          <p>Build skills for tomorrow with learning experiences designed around you.</p>
+          <div className="login-illustration"><div className="orbit orbit-one" /><div className="orbit orbit-two" /><div className="illustration-card"><div className="ill-icon"><Cloud size={28} /></div><div><b>Azure Fundamentals</b><small>Learning path · 68% complete</small></div><div className="ill-progress"><span /></div></div><div className="float-chip chip-a"><Award size={17} /> New certification</div><div className="float-chip chip-b"><Zap size={16} /> 3 day streak</div></div>
+        </div>
+        <div className="login-left-footer">A prototype experience · Not an official Microsoft product</div>
+      </div>
+      <div className="login-right">
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="form-kicker">{isEntra ? 'ORGANIZATIONAL ACCESS' : resetMode ? 'ACCOUNT RECOVERY' : 'WELCOME TO MICROSOFT LEARNING HUB'}</div>
+          <h2>{isEntra ? 'Sign in with your organization' : resetMode ? 'Reset your password' : 'Welcome back'}</h2>
+          <p className="login-subtitle">{isEntra ? 'Use your organization’s Microsoft Entra ID account to continue.' : resetMode ? 'Enter your email and we’ll show the demo recovery confirmation.' : 'Pick up where you left off on your learning journey.'}</p>
+          {!isEntra && <label className="field-label" htmlFor="login-email">Email address</label>}
+          {!isEntra && <div className="input-wrap"><Mail size={17} /><input id="login-email" required type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" /></div>}
+          {!isEntra && !resetMode && <>
+            <label className="field-label password-label" htmlFor="login-password">Password <button type="button" className="text-button" onClick={() => setResetMode(true)}>Forgot password?</button></label>
+            <div className="input-wrap"><LockKeyhole size={17} /><input id="login-password" required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" /><button type="button" className="password-toggle" onClick={() => setShowPassword((shown) => !shown)} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+            <label className="remember"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /> <span>Remember me on this device</span></label>
+          </>}
+          {error && <div className="login-error" role="alert">{error}</div>}
+          <button className="button button-primary login-submit" type="submit">{isEntra ? 'Continue with Microsoft' : resetMode ? 'Send reset instructions' : 'Sign in'} <ArrowRight size={17} /></button>
+          {resetMode && <button className="text-button reset-back" type="button" onClick={() => setResetMode(false)}>Back to sign in</button>}
+          {!isEntra && <><div className="divider"><span>or</span></div><button type="button" className="button org-button" onClick={onEntraSignIn} disabled title="Set VITE_ENTRA_CLIENT_ID to enable organizational sign-in"><span className="entra-mark"><span /><span /><span /><span /></span> Sign in with organizational account</button></>}
+          <div className="demo-note"><ShieldCheck size={16} /><span>{isEntra ? 'Sign-in is configured for this deployment. Organizational accounts are handled by Microsoft Entra ID.' : 'Demo sign-in — any email address and password will work. No credentials are sent to a service.'}</span></div>
+          <div className="login-terms">By signing in, you agree to our <a href="#terms" onClick={(event) => event.preventDefault()}>Terms</a> and <a href="#privacy" onClick={(event) => event.preventDefault()}>Privacy statement</a>.</div>
+        </form>
+        <div className="login-copyright">© 2026 Learning Hub Demo <span>·</span> Privacy <span>·</span> Help</div>
+      </div>
+      {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
+    </div>
+  );
 }
 
 function PageHeader({ eyebrow, title, description, action }) {
@@ -171,9 +445,10 @@ function CourseCard({ course, onCourse, alert }) {
   return <article className="course-card"><CourseArt course={course} /><div className="course-card-body"><div className="course-meta"><span className="tag">{course.category}</span><span className="difficulty">{course.difficulty}</span></div><h3>{course.title}</h3><div className="course-code">{course.code}</div><p>{course.description}</p><div className="course-details"><span><Clock3 size={14} />{course.duration}</span><span><Users size={14} />{course.instructor}</span></div>{course.enrolled ? <div className="course-progress"><div><span>Your progress</span><b>{course.progress}%</b></div><ProgressBar value={course.progress} /></div> : <div className="course-progress course-open"><span>Ready when you are</span></div>}<div className="course-card-actions">{course.enrolled ? <Button variant="secondary" onClick={() => onCourse(course.id)}>Continue learning <ArrowRight size={15} /></Button> : <Button onClick={() => { onCourse(course.id); alert(`Previewing ${course.title}`); }}>View course <ArrowRight size={15} /></Button>}</div></div></article>;
 }
 
-function Dashboard({ onNavigate, onCourse, role }) {
+function Dashboard({ onNavigate, onCourse, role, displayName }) {
   const enrolled = courses.filter((course) => course.enrolled && course.progress > 0);
-  return <><PageHeader eyebrow={`${role.toUpperCase()} WORKSPACE · THURSDAY, NOVEMBER 26`} title="Good morning, Kranthi!" description="Ready to make today a little more knowledgeable?" action={<Button variant="secondary" icon={CalendarDays} onClick={() => onNavigate('assignments')}>View my schedule</Button>} />
+  const firstName = displayName.split(' ')[0] || 'Learner';
+  return <><PageHeader eyebrow={`${role.toUpperCase()} WORKSPACE · THURSDAY, NOVEMBER 26`} title={`Good morning, ${firstName}!`} description="Ready to make today a little more knowledgeable?" action={<Button variant="secondary" icon={CalendarDays} onClick={() => onNavigate('assignments')}>View my schedule</Button>} />
     {role !== 'Student' && <div className="role-banner"><Sparkles size={17} /><span><b>{role} preview</b> — You’re viewing role-specific tools in demo mode.</span></div>}
     <div className="stats-grid dashboard-stats"><StatCard icon={BookOpen} label="Enrolled courses" value="4" trend="2" /><StatCard icon={Play} label="In progress" value="2" color="purple" trend="12%" /><StatCard icon={CheckCircle2} label="Completed" value="1" color="green" footnote="Keep the momentum going" /><StatCard icon={FileText} label="Pending assignments" value="2" color="orange" footnote="Next due Nov 28" /><StatCard icon={CalendarDays} label="Upcoming assessments" value="1" color="purple" footnote="Next Nov 27" /><StatCard icon={Award} label="Certifications earned" value="1" color="green" footnote="Azure AI Fundamentals" /></div>
     <div className="dashboard-grid"><section className="panel progress-panel"><div className="panel-heading"><div><div className="eyebrow">YOUR JOURNEY</div><h2>My learning progress</h2></div><button className="link-button" onClick={() => onNavigate('learning')}>View all <ArrowRight size={15} /></button></div><div className="journey-progress"><div className="progress-ring"><div><b>42%</b><small>overall</small></div></div><div className="journey-copy"><strong>You're building great habits.</strong><p>You've completed <b>1 of 4</b> courses. Keep it up!</p><div className="mini-legend"><span><i className="legend-blue" /> In progress <b>2</b></span><span><i className="legend-green" /> Completed <b>1</b></span><span><i className="legend-grey" /> Not started <b>1</b></span></div></div></div><div className="course-progress-list">{enrolled.slice(0, 3).map((course) => <div className="progress-course-row" key={course.id}><div className={`tiny-course-icon art-${course.color}`}>{course.icon}</div><div className="progress-course-info"><div><b>{course.title}</b><span>{course.progress}%</span></div><ProgressBar value={course.progress} /></div><button className="icon-btn" onClick={() => onCourse(course.id)} aria-label={`Continue ${course.title}`}><ArrowRight size={16} /></button></div>)}</div></section>
@@ -350,15 +625,18 @@ function Submission({ assignment, selectedFile, setFile, comment, setComment, on
   return <><button className="back-link" onClick={onBack}><ArrowLeft size={15} /> Assignment center</button><PageHeader eyebrow="ASSIGNMENT SUBMISSION" title={assignment.title} description={assignment.course} action={<StatusPill status={assignment.status} />} /><div className="submission-grid"><section className="panel assignment-instructions"><div className="panel-heading"><div><div className="eyebrow">YOUR TASK</div><h2>Assignment instructions</h2></div><span className="due-date-box"><CalendarDays size={15} /> Due {assignment.due}</span></div><p>{assignment.detail}</p><h3>Submission requirements</h3><ul><li>Include your name and course in the document.</li><li>Explain your decisions clearly and reference course materials.</li><li>Upload one file in PDF, DOCX, PPTX, or ZIP format.</li></ul><div className="assignment-rubric"><b><ShieldCheck size={17} /> How your work will be assessed</b><span>Accuracy and completeness <strong>40%</strong></span><span>Application of course concepts <strong>35%</strong></span><span>Clarity and presentation <strong>25%</strong></span></div></section><form className="panel upload-panel" onSubmit={onSubmit}><div className="eyebrow">SUBMIT YOUR WORK</div><h2>Upload assignment</h2><p>Choose a file from your device. Accepted formats: PDF, DOCX, PPTX, ZIP (max 25 MB).</p><label className={`upload-dropzone ${selectedFile ? 'has-file' : ''}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const file = event.dataTransfer.files?.[0]; if (file) chooseFile(file); }}><input type="file" accept=".pdf,.docx,.pptx,.zip" onChange={fileInput} /><span className="upload-icon">{selectedFile ? <FileCheck2 size={22} /> : <Upload size={22} />}</span><b>{selectedFile ? selectedFile.name : 'Drop your file here'}</b><span>{selectedFile ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} MB · Ready to submit` : <>or <em>browse files</em></>}</span></label>{selectedFile && <button type="button" className="remove-file" onClick={() => setFile(null)}><X size={14} /> Remove file</button>}<label className="field-label comment-label">Comments <span>Optional</span></label><textarea rows="3" placeholder="Add a note for your instructor..." value={comment} onChange={(event) => setComment(event.target.value)} /><Button className="submit-assignment" icon={Upload}>Submit assignment</Button><div className="secure-note"><LockKeyhole size={13} /> Your work is securely stored in this demo session.</div></form></div></>;
 }
 
-function Assessments({ onStart }) {
+function Assessments({ onStart, history }) {
   const [showHistory, setShowHistory] = useState(false);
   return (
     <>
       <PageHeader eyebrow={showHistory ? 'YOUR LEARNING RECORD' : 'CHECK YOUR KNOWLEDGE'} title={showHistory ? 'Assessment history' : 'Assessments'} description="Measure your progress and put your new skills into practice." action={<Button variant="secondary" icon={Clock3} onClick={() => setShowHistory((current) => !current)}>{showHistory ? 'Available assessments' : 'Assessment history'}</Button>} />
       {showHistory ? (
         <div className="panel assessment-list-panel">
-          <div className="panel-heading"><div><div className="eyebrow">COMPLETED ATTEMPTS</div><h2>Your assessment history</h2></div><span className="status-pill status-completed"><i />1 passed</span></div>
-          <div className="assessment-row"><div className="assessment-badge"><CheckCircle2 size={21} /></div><div className="assessment-info"><h3>Azure AI Fundamentals · Knowledge check</h3><p>Completed Nov 18, 2026 <span>·</span> Attempt 1</p><div className="assessment-chips"><span><Award size={13} /> 87% score</span><span><CheckCircle2 size={13} /> Passed</span></div></div><span className="status-pill status-completed"><i />Passed</span></div>
+          <div className="panel-heading"><div><div className="eyebrow">COMPLETED ATTEMPTS</div><h2>Your assessment history</h2></div><span className="status-pill status-completed"><i />{history.filter((attempt) => attempt.score >= 70).length} passed</span></div>
+          {history.length ? history.map((attempt, index) => {
+            const passed = attempt.score >= 70;
+            return <div className="assessment-row" key={attempt.id}><div className="assessment-badge"><CheckCircle2 size={21} /></div><div className="assessment-info"><h3>Azure Fundamentals · Knowledge check</h3><p>Completed {new Date(attempt.completedAt).toLocaleString()} <span>·</span> Attempt {history.length - index}</p><div className="assessment-chips"><span><Award size={13} /> {attempt.score}% score</span><span>{passed ? <CheckCircle2 size={13} /> : <Clock3 size={13} />} {passed ? 'Passed' : 'Review recommended'}</span></div></div><span className={`status-pill status-${passed ? 'completed' : 'progress'}`}><i />{passed ? 'Passed' : 'Not passed'}</span></div>;
+          }) : <div className="empty-state"><CircleHelp size={27} /><h3>No completed assessments yet</h3><p>Your submitted attempts will appear here.</p></div>}
         </div>
       ) : (
         <>
@@ -398,9 +676,9 @@ function Quiz({ answers, setAnswers, onSubmit, onSave }) {
   const selected = answers[questionIndex];
   return <><div className="quiz-top"><button className="back-link" onClick={() => window.confirm('Leave this assessment? Your answers are saved in this demo.') && onSave()}><ArrowLeft size={15} /> Assessments</button><div className="quiz-title"><span>AZURE FUNDAMENTALS</span><b>Knowledge check</b></div><button className="button button-secondary" onClick={onSave}>Save & exit</button></div><div className="quiz-layout"><section className="panel quiz-main"><div className="quiz-progress-info"><span>QUESTION {fmt(questionIndex + 1)} <i>OF</i> {fmt(quizQuestions.length)}</span><span><Clock3 size={15} /> {fmt(Math.floor(secondsLeft / 60))}:{fmt(secondsLeft % 60)}</span></div><ProgressBar value={((questionIndex + 1) / quizQuestions.length) * 100} /><div className="question-type">{question.type === 'multi' ? 'MULTIPLE SELECT' : question.type === 'truefalse' ? 'TRUE OR FALSE' : 'MULTIPLE CHOICE'}{question.type === 'multi' && <span> · Select all that apply</span>}</div><h1>{question.question}</h1><div className="answer-options">{question.options.map((option, index) => { const active = question.type === 'multi' ? (selected || []).includes(index) : selected === index; return <button className={`answer-option ${active ? 'answer-selected' : ''}`} key={option} onClick={() => toggleAnswer(index)}><span className={`answer-mark ${question.type === 'multi' ? 'checkbox-mark' : ''}`}>{active && <Check size={14} />}</span><span>{option}</span><kbd>{String.fromCharCode(65 + index)}</kbd></button>; })}</div><div className="quiz-footer"><Button variant="ghost" onClick={() => setQuestionIndex(Math.max(0, questionIndex - 1))} disabled={questionIndex === 0}><ChevronLeft size={16} /> Previous</Button><span>{Object.keys(answers).length} of {quizQuestions.length} answered</span>{questionIndex < quizQuestions.length - 1 ? <Button onClick={() => setQuestionIndex(questionIndex + 1)}>Next question <ChevronRight size={16} /></Button> : <Button onClick={onSubmit}>Submit assessment <Check size={15} /></Button>}</div></section><aside className="panel quiz-sidebar"><div className="eyebrow">QUESTION NAVIGATION</div><h3>Your questions</h3><div className="question-nav">{quizQuestions.map((item, index) => <button key={item.question} className={`${questionIndex === index ? 'current' : ''} ${answers[index] !== undefined ? 'answered' : ''}`} onClick={() => setQuestionIndex(index)}>{fmt(index + 1)}{answers[index] !== undefined && <Check size={13} />}</button>)}</div><div className="quiz-side-divider" /><div className="quiz-help"><CircleHelp size={17} /><span>Take your time. You can review your answers before submitting.</span></div><Button variant="secondary" className="quiz-save" onClick={onSave}>Save progress</Button></aside></div></>;
 }
-function Results({ score, answers, onRetry }) {
+function Results({ score, answers, completedAt, onRetry }) {
   const passed = score / quizQuestions.length * 100 >= 70;
-  return <><PageHeader eyebrow="ASSESSMENT COMPLETE" title="Your results" description="Azure Fundamentals · Knowledge check" /><div className="result-layout"><div className={`result-card ${passed ? 'passed' : 'failed'}`}><div className="result-icon">{passed ? <CheckCircle2 size={28} /> : <Activity size={28} />}</div><div className="eyebrow">{passed ? 'NICE WORK' : 'KEEP PRACTICING'}</div><h2>{passed ? 'You passed!' : 'Not quite there yet'}</h2><p>{passed ? 'You’ve demonstrated a solid understanding of Azure fundamentals.' : 'Review your course material and try again when you’re ready.'}</p><div className="result-score"><strong>{Math.round(score / quizQuestions.length * 100)}<small>%</small></strong><span>YOUR SCORE</span></div><div className="result-threshold"><span>Passing score</span><b>70%</b></div><ProgressBar value={score / quizQuestions.length * 100} color={passed ? 'green' : 'orange'} /><div className="result-date"><CalendarDays size={14} /> Completed November 26, 2026</div><Button onClick={onRetry}>{passed ? 'Back to assessments' : 'Try again'} <ArrowRight size={15} /></Button></div><div className="panel result-breakdown"><div className="eyebrow">PERFORMANCE BREAKDOWN</div><h2>Question summary</h2>{quizQuestions.map((question, index) => { const selected = answers[index]; const isCorrect = question.type === 'multi' ? JSON.stringify([...(selected || [])].sort()) === JSON.stringify([...question.answer].sort()) : selected === question.answer; return <div className="result-question" key={question.question}><span className={`answer-result-icon ${isCorrect ? 'correct' : 'incorrect'}`}>{isCorrect ? <Check size={15} /> : <X size={15} />}</span><div><b>Question {index + 1}</b><p>{question.question}</p></div><span className={isCorrect ? 'result-correct-label' : 'result-wrong-label'}>{isCorrect ? 'Correct' : 'Review'}</span></div>; })}<div className="result-review-note"><Sparkles size={16} /> Keep learning — each attempt is a chance to grow.</div></div></div></>;
+  return <><PageHeader eyebrow="ASSESSMENT COMPLETE" title="Your results" description="Azure Fundamentals · Knowledge check" /><div className="result-layout"><div className={`result-card ${passed ? 'passed' : 'failed'}`}><div className="result-icon">{passed ? <CheckCircle2 size={28} /> : <Activity size={28} />}</div><div className="eyebrow">{passed ? 'NICE WORK' : 'KEEP PRACTICING'}</div><h2>{passed ? 'You passed!' : 'Not quite there yet'}</h2><p>{passed ? 'You’ve demonstrated a solid understanding of Azure fundamentals.' : 'Review your course material and try again when you’re ready.'}</p><div className="result-score"><strong>{Math.round(score / quizQuestions.length * 100)}<small>%</small></strong><span>YOUR SCORE</span></div><div className="result-threshold"><span>Passing score</span><b>70%</b></div><ProgressBar value={score / quizQuestions.length * 100} color={passed ? 'green' : 'orange'} /><div className="result-date"><CalendarDays size={14} /> Completed {completedAt ? new Date(completedAt).toLocaleString() : 'just now'}</div><Button onClick={onRetry}>{passed ? 'Back to assessments' : 'Try again'} <ArrowRight size={15} /></Button></div><div className="panel result-breakdown"><div className="eyebrow">PERFORMANCE BREAKDOWN</div><h2>Question summary</h2>{quizQuestions.map((question, index) => { const selected = answers[index]; const isCorrect = question.type === 'multi' ? JSON.stringify([...(selected || [])].sort()) === JSON.stringify([...question.answer].sort()) : selected === question.answer; return <div className="result-question" key={question.question}><span className={`answer-result-icon ${isCorrect ? 'correct' : 'incorrect'}`}>{isCorrect ? <Check size={15} /> : <X size={15} />}</span><div><b>Question {index + 1}</b><p>{question.question}</p></div><span className={isCorrect ? 'result-correct-label' : 'result-wrong-label'}>{isCorrect ? 'Correct' : 'Review'}</span></div>; })}<div className="result-review-note"><Sparkles size={16} /> Keep learning — each attempt is a chance to grow.</div></div></div></>;
 }
 
 function Certifications({ courses: courseList, onDownload, onCourse }) {
@@ -431,7 +709,101 @@ function Certifications({ courses: courseList, onDownload, onCourse }) {
   );
 }
 
-function Notifications({ read, setRead }) {
+function Notifications({ readIds, filter, setFilter, onReadAll, onRead, onSettings }) {
+  const visible = notifications.filter((item) => filter === 'All' || (filter === 'Unread'
+    ? item.unread && !readIds.includes(item.title)
+    : !item.unread || readIds.includes(item.title)));
+  const icons = { CalendarDays, FileCheck2, Award, BookOpen };
+  const unreadCount = notifications.filter((item) => item.unread && !readIds.includes(item.title)).length;
+  return <>
+    <PageHeader eyebrow="STAY IN THE LOOP" title="Notifications" description="The latest updates on your learning, submissions, and upcoming deadlines." action={<Button variant="secondary" onClick={onReadAll} disabled={!unreadCount}>Mark all as read <Check size={15} /></Button>} />
+    <div className="notification-toolbar"><div className="tabs">{['All', 'Unread', 'Read'].map((tab) => <button key={tab} className={filter === tab ? 'selected' : ''} onClick={() => setFilter(tab)}>{tab}<span>{tab === 'All' ? notifications.length : tab === 'Unread' ? unreadCount : notifications.length - unreadCount}</span></button>)}</div><button className="link-button" onClick={onSettings}><Settings size={14} /> Notification settings</button></div>
+    <div className="notification-list">{visible.map((item, index) => {
+      const Icon = icons[item.icon] || Bell;
+      const isRead = readIds.includes(item.title) || !item.unread;
+      return <article className={`notification-card ${!isRead ? 'unread' : ''}`} key={item.title}>
+        <div className={`notification-icon notification-${notifications.indexOf(item)}`}><Icon size={19} /></div>
+        <div className="notification-copy"><div><b>{item.title}</b>{!isRead && <i className="unread-dot" />}</div><p>{item.text}</p><span>{item.time}</span></div>
+        {!isRead && <button className="notification-read-button" onClick={() => onRead(item.title)}>Mark as read</button>}
+      </article>;
+    })}</div>
+    {visible.length === 0 && <div className="empty-state"><Bell size={27} /><h3>No {filter.toLowerCase()} notifications</h3><p>You're all caught up for now.</p></div>}
+    {filter !== 'Unread' && unreadCount === 0 && <div className="notifications-end"><CheckCircle2 size={17} /> You're all caught up!</div>}
+  </>;
+}
+
+function ProfilePage({ profile, account, mode, onChange, onSave }) {
+  return <>
+    <PageHeader eyebrow="YOUR ACCOUNT" title="My Profile" description="Keep your learning profile up to date." action={<Button icon={Check} onClick={onSave}>Save changes</Button>} />
+    <form className="account-page-grid" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
+      <section className="panel profile-summary-panel"><div className="profile-large-avatar">{profile.displayName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</div><h2>{profile.displayName}</h2><p>{profile.designation}</p><span className="account-role-chip"><GraduationCap size={14} /> Learning participant</span><div className="profile-identity-detail"><span>ACCOUNT TYPE</span><b>{mode === 'demo' ? 'Demo account' : 'Organizational account'}</b></div><div className="profile-identity-detail"><span>EMAIL</span><b>{account?.username || 'kranthi@example.com'}</b></div></section>
+      <section className="panel profile-form-panel"><div className="eyebrow">PERSONAL INFORMATION</div><h2>Profile details</h2><p className="form-description">Your email and identity are managed by your sign-in provider.</p>
+        <div className="form-grid">
+          <label className="field-label">Display name<input value={profile.displayName} onChange={(event) => onChange('displayName', event.target.value)} required maxLength={80} /></label>
+          <label className="field-label">Email address<input value={account?.username || 'kranthi@example.com'} readOnly disabled /></label>
+          <label className="field-label">Job title<input value={profile.designation} onChange={(event) => onChange('designation', event.target.value)} maxLength={100} /></label>
+          <label className="field-label">Department<input value={profile.department} onChange={(event) => onChange('department', event.target.value)} maxLength={80} /></label>
+          <label className="field-label">Phone number<input type="tel" value={profile.phone} onChange={(event) => onChange('phone', event.target.value)} maxLength={30} /></label>
+          <label className="field-label">Employee ID<input value={profile.employeeId} readOnly disabled /></label>
+          <label className="field-label">Manager<input value={profile.manager} readOnly disabled /></label>
+        </div>
+        <div className="profile-save-row"><span><ShieldCheck size={15} /> Profile edits are saved locally in this prototype.</span><Button type="submit" icon={Check}>Save profile</Button></div>
+      </section>
+    </form>
+  </>;
+}
+
+function AccountSettings({ account, role, mode, onSignOut }) {
+  return <>
+    <PageHeader eyebrow="SECURITY & ACCOUNT" title="Account Settings" description="Review your sign-in method and account details." />
+    <div className="settings-grid">
+      <section className="panel settings-panel"><div className="settings-panel-icon"><UserCog size={20} /></div><div className="eyebrow">SIGN-IN IDENTITY</div><h2>Account information</h2><p>Identity credentials are controlled by your configured sign-in provider.</p><div className="setting-detail-row"><span>Email address</span><b>{account?.username || 'kranthi@example.com'}</b></div><div className="setting-detail-row"><span>Provider</span><b>{mode === 'demo' ? 'Local demo sign-in' : 'Microsoft Entra ID'}</b></div><div className="setting-detail-row"><span>Current role</span><b>{role}{mode === 'demo' ? ' (preview)' : ''}</b></div><div className="integration-note"><ShieldCheck size={16} /> This frontend role display is not a security boundary. Protect APIs with server-side authorization.</div><Button variant="secondary" icon={LogOut} onClick={onSignOut}>Sign out</Button></section>
+      <section className="panel settings-panel"><div className="settings-panel-icon"><LockKeyhole size={20} /></div><div className="eyebrow">PASSWORD & SECURITY</div><h2>Authentication settings</h2><p>{mode === 'demo' ? 'This prototype does not store or validate passwords. Demo sign-in accepts any email and password.' : 'Password, MFA, and recovery options are managed by your organization.'}</p><div className="security-status"><CheckCircle2 size={17} /><span><b>{mode === 'demo' ? 'Demo authentication' : 'Organization-managed identity'}</b><small>{mode === 'demo' ? 'No password is saved in browser storage.' : 'Configured authentication uses Microsoft Entra ID.'}</small></span></div><div className="integration-note"><SlidersHorizontal size={16} /> Add Entra conditional access, MFA, and role assignment through tenant policy before production use.</div></section>
+    </div>
+  </>;
+}
+
+function NotificationSettings({ preferences, onChange }) {
+  const switches = [
+    ['emailDeadlines', 'Assignment and assessment reminders', 'Get email reminders before due dates.'],
+    ['emailGrades', 'Grading and assessment results', 'Know when a score or review is available.'],
+    ['emailCourseUpdates', 'Course and instructor updates', 'Receive learning material and course announcements.'],
+    ['productUpdates', 'Learning Hub product updates', 'Receive occasional feature and service announcements.'],
+    ['compactMode', 'Compact interface', 'Use tighter spacing for lists and course cards.'],
+  ];
+  return <>
+    <PageHeader eyebrow="PREFERENCES" title="Notification Preferences" description="Choose which learning updates you want to receive." />
+    <div className="settings-grid"><section className="panel preferences-panel"><div className="eyebrow">MESSAGES & DISPLAY</div><h2>Your preferences</h2><p className="form-description">Preferences are saved in this browser for this account.</p>
+      {switches.map(([key, title, description]) => <label className="preference-row" key={key}><span><b>{title}</b><small>{description}</small></span><input type="checkbox" role="switch" checked={Boolean(preferences[key])} onChange={(event) => onChange(key, event.target.checked)} /></label>)}
+      <label className="field-label language-setting">Language and region<select value={preferences.language} onChange={(event) => onChange('language', event.target.value)}><option>English (United States)</option><option>English (United Kingdom)</option><option>French (France)</option><option>Spanish (Spain)</option></select></label>
+    </section><section className="panel settings-panel"><div className="settings-panel-icon"><Globe2 size={20} /></div><div className="eyebrow">DELIVERY INFORMATION</div><h2>About notifications</h2><p>This prototype does not send emails or push notifications. The preferences are saved locally to demonstrate the settings experience.</p><div className="integration-note"><Mail size={16} /> Connect notification delivery to a trusted backend before enabling real reminders.</div></section></div>
+  </>;
+}
+
+function HelpPage() {
+  return <>
+    <PageHeader eyebrow="SUPPORT" title="Help and Support" description="Find answers to common questions about this learning portal demo." />
+    <div className="settings-grid"><section className="panel help-content-panel"><div className="eyebrow">FREQUENTLY ASKED QUESTIONS</div><h2>How can we help?</h2>
+      <details><summary>How do I save my learning progress?</summary><p>Course enrollment, completed lessons, assignment metadata, assessment drafts, and preferences are stored in this browser for the demo.</p></details>
+      <details><summary>Are uploaded assignment files stored?</summary><p>No. File contents stay in the current browser session. Only the filename and submission status are recorded in local demo state.</p></details>
+      <details><summary>Are the certificates official?</summary><p>No. Certificates in this prototype are sample demonstrations and are not Microsoft credentials.</p></details>
+      <details><summary>Who can access administrator tools?</summary><p>Role previews only adjust the interface in this prototype. Production APIs must independently authenticate users and enforce authorization.</p></details>
+      </section><section className="panel settings-panel"><div className="settings-panel-icon"><LifeBuoy size={20} /></div><div className="eyebrow">CONTACT SUPPORT</div><h2>Need more help?</h2><p>Contact your learning program administrator for account or course questions.</p><a className="button button-secondary support-link" href="mailto:learning-support@example.com"><Mail size={16} /> Email learning support</a><div className="integration-note"><CircleHelp size={16} /> Demo support contact. Replace with your organization's support channel.</div></section></div>
+  </>;
+}
+
+function AboutPage() {
+  return <>
+    <PageHeader eyebrow="ABOUT THIS EXPERIENCE" title="Microsoft Learning Hub" description="A learning management portal prototype for stakeholder demonstration." />
+    <section className="panel about-panel"><div className="about-brand-mark"><BookOpen size={24} /></div><div><div className="eyebrow">DEMO PROTOTYPE</div><h2>Built to explore learning workflows</h2><p>This responsive prototype demonstrates course discovery, assignments, assessments, certification tracking, account preferences, and role-based interface previews.</p><div className="integration-note"><ShieldCheck size={16} /> Not an official Microsoft product. Microsoft names are used only to describe sample learning content; no Microsoft logo or endorsement is implied.</div><div className="about-tags"><span>React</span><span>Vite</span><span>Mock data</span><span>Optional Entra configuration</span></div></div></section>
+  </>;
+}
+
+function AccessDenied({ onBack }) {
+  return <section className="panel access-denied-panel"><div className="settings-panel-icon"><LockKeyhole size={21} /></div><div className="eyebrow">ACCESS UNAVAILABLE</div><h2>This workspace is not available for your role</h2><p>Switch to an authorized demo role or return to your dashboard. Production access must be enforced by the backend.</p><Button onClick={onBack}>Return to dashboard <ArrowRight size={15} /></Button></section>;
+}
+
+function DeprecatedNotifications({ read, setRead }) {
   return <><PageHeader eyebrow="STAY IN THE LOOP" title="Notifications" description="The latest updates on your learning, submissions, and upcoming deadlines." action={<Button variant="secondary" onClick={() => setRead(true)}>Mark all as read <Check size={15} /></Button>} /><div className="notification-toolbar"><div className="tabs"><button className="selected">All <span>4</span></button><button>Unread <span>{read ? '0' : '2'}</span></button></div><button className="link-button"><Settings size={14} /> Notification settings</button></div><div className="notification-list">{notifications.map((item, index) => { const Icon = ({ CalendarDays, FileCheck2, Award, BookOpen })[item.icon]; return <article className={`notification-card ${item.unread && !read ? 'unread' : ''}`} key={item.title}><div className={`notification-icon notification-${index}`}><Icon size={19} /></div><div className="notification-copy"><div><b>{item.title}</b>{item.unread && !read && <i className="unread-dot" />}</div><p>{item.text}</p><span>{item.time}</span></div><button className="icon-btn" aria-label="Notification options"><MoreHorizontal size={19} /></button></article>; })}</div><div className="notifications-end"><CheckCircle2 size={17} /> You're all caught up!</div></>;
 }
 
